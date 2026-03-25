@@ -1,0 +1,30 @@
+{
+  "_comment": "INTEL-005 four-target pattern — OpenAI Codex / GitHub Copilot config",
+  "plugin": "lax",
+  "version": "0.1.0-skeleton",
+  "protocol": "godman-protocols/lax",
+  "description": "Latency-Aware Execution",
+  "context": {
+    "language": "typescript",
+    "target_runtime": "node20",
+    "phase": "skeleton",
+    "key_types": [
+      "LatencyBudget",
+      "ExecutionSlot",
+      "SLAContract",
+      "RoutingDecision",
+      "LatencyProbe"
+    ],
+    "coding_guidelines": [
+      "All public functions must have JSDoc",
+      "No external dependencies in skeleton phase",
+      "Stubs must throw descriptive 'not implemented' errors",
+      "Use strict TypeScript — no 'any' types"
+    ]
+  },
+  "completions": {
+    "prefer_explicit_types": true,
+    "avoid_implicit_any": true,
+    "test_framework": "none"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "@godman-protocols/lax",
+  "version": "0.2.0",
+  "description": "Latency-Aware Execution \u2014 route AI agent tasks to the fastest available runtime using SLA contracts and latency budgets",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": "./dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "npx tsx smoke.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "latency",
+    "scheduling",
+    "sla",
+    "routing",
+    "agent-infrastructure",
+    "godman-protocols",
+    "multi-agent"
+  ],
+  "author": "skingem1",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/godman-protocols/lax.git"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "tsx": "^4.7.0"
+  },
+  "dependencies": {},
+  "homepage": "https://github.com/skingem1/godman-protocols/tree/main/lax#readme",
+  "bugs": {
+    "url": "https://github.com/skingem1/godman-protocols/issues"
+  }
+}

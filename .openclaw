@@ -1,0 +1,34 @@
+{
+  "_comment": "INTEL-005 four-target pattern — OpenClaw / ClaWHub integration config",
+  "plugin": "lax",
+  "version": "0.1.0-skeleton",
+  "openclaw_version": "v2026.3.7+",
+  "protocol": "godman-protocols/lax",
+  "description": "Latency-Aware Execution",
+  "clawhub": {
+    "registry_slug": "godman-protocols/lax",
+    "tier": "T2",
+    "published": false,
+    "publish_when": "v0.2.0 — after core implementation is complete"
+  },
+  "skills": [],
+  "agent_context": {
+    "primary_agent": "ceo",
+    "allowed_agents": ["ceo", "coder", "supervisor"],
+    "model_tier": "T2",
+    "preferred_model": "qwen3:14b",
+    "fallback_model": "claude-sonnet-4-6"
+  },
+  "permissions": {
+    "session_isolation": true,
+    "sandbox_skills": false,
+    "ssrf_protection": true,
+    "path_validation": true
+  },
+  "intel_005": {
+    "pattern": "four-target",
+    "targets": ["claude", "cursor", "codex", "openclaw"],
+    "status": "skeleton",
+    "note": "All four targets configured. No live skills registered until v0.2."
+  }
+}

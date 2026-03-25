@@ -1,0 +1,24 @@
+{
+  "_comment": "INTEL-005 four-target pattern — Cursor IDE plugin config",
+  "plugin": "lax",
+  "version": "0.1.0-skeleton",
+  "protocol": "godman-protocols/lax",
+  "description": "Latency-Aware Execution",
+  "entrypoint": "src/index.ts",
+  "rules_file": null,
+  "context_files": [
+    "README.md",
+    "src/types.ts",
+    "src/index.ts"
+  ],
+  "workspace_settings": {
+    "typescript.tsdk": "node_modules/typescript/lib",
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "ai_context": {
+    "project_type": "protocol-library",
+    "language": "typescript",
+    "framework": "none",
+    "notes": "LAX is a protocol skeleton. Stubs throw 'not implemented'. Do not remove stubs — they define the contract."
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "_comment": "INTEL-005 four-target pattern — Claude Code plugin config",
+  "plugin": "lax",
+  "version": "0.1.0-skeleton",
+  "protocol": "godman-protocols/lax",
+  "description": "Latency-Aware Execution",
+  "entrypoint": "src/index.ts",
+  "skills": [],
+  "context_files": [
+    "README.md",
+    "src/types.ts",
+    "src/index.ts"
+  ],
+  "slash_commands": {},
+  "permissions": {
+    "read_files": true,
+    "write_files": false,
+    "execute_code": false,
+    "network": false
+  },
+  "model_hints": {
+    "preferred": "claude-sonnet-4-6",
+    "fallback": "claude-haiku-4-5-20251001"
+  }
+}
