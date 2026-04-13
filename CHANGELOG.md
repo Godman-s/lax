@@ -32,5 +32,5 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
-[0.2.0]: https://github.com/godman-protocols/lax/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/godman-protocols/lax/releases/tag/v0.1.0
+[0.2.0]: https://github.com/Godman-s/lax/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/Godman-s/lax/releases/tag/v0.1.0

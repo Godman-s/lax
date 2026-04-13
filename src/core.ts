@@ -1,186 +1,358 @@
 /**
- * LAX — Latency-Aware Execution
- * Core implementation: budget, probe, routing, SLA
- * @version 0.2.0
+ * LAX — Linked Agent eXchange
+ * "Discoverable by design. An agent that cannot be found cannot transact."
+ *
+ * Core implementation: RegistryClient, A2AExporter, discovery helpers.
+ * @version 0.3.0
  */
 
-import { randomUUID } from 'node:crypto';
 import type {
-  AgentId,
-  DurationMs,
-  ExecutionSlot,
-  LatencyBudget,
-  LatencyProbe,
-  RoutingDecision,
-  SLAContract,
-  Timestamp,
+  LaxOffer,
+  LaxCapability,
+  LaxPricing,
+  RegistryClientConfig,
+  RegistrySearchParams,
+  RegistrySearchResult,
+  OfferValidationResult,
+  A2AAgentCard,
+  A2ASkill,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
-// Budget creation
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Default registry URL */
+const DEFAULT_REGISTRY_URL = 'https://lax.kognai.ai/registry';
+
+/** Default request timeout in ms */
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** Well-known path for self-hosted LAX offers */
+export const LAX_WELL_KNOWN_PATH = '/.well-known/lax-offer.json';
+
+/** Well-known path for A2A agent cards */
+export const A2A_WELL_KNOWN_PATH = '/.well-known/agent.json';
+
+// ---------------------------------------------------------------------------
+// Offer validation
 // ---------------------------------------------------------------------------
 
 /**
- * Create a LatencyBudget for a task.
- * @param maxLatencyMs  Hard ceiling — abort/re-route if exceeded
- * @param targetLatencyMs  Soft target the scheduler optimises toward
- * @param hardLimit  If true, abort the task on budget breach (default: false)
+ * Validate a LaxOffer for structural correctness.
+ * Does NOT verify on-chain data — use RegistryClient.validate() for full validation.
  */
-export function createBudget(
-  maxLatencyMs: DurationMs,
-  targetLatencyMs: DurationMs,
-  hardLimit = false,
-  options: { id?: string; createdAt?: Timestamp } = {}
-): LatencyBudget {
-  if (maxLatencyMs <= 0) throw new Error('maxLatencyMs must be positive');
-  if (targetLatencyMs <= 0) throw new Error('targetLatencyMs must be positive');
-  if (targetLatencyMs > maxLatencyMs) throw new Error('targetLatencyMs must be <= maxLatencyMs');
-  return {
-    id: options.id ?? randomUUID(),
-    maxLatencyMs,
-    targetLatencyMs,
-    hardLimit,
-    createdAt: options.createdAt ?? new Date().toISOString(),
-  };
-}
+export function validateOffer(offer: LaxOffer): OfferValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
 
-// ---------------------------------------------------------------------------
-// Runtime probing
-// ---------------------------------------------------------------------------
-
-/**
- * Create a LatencyProbe result for a runtime.
- * In production, replace with actual HTTP HEAD timing.
- * This function creates the probe data structure — actual network
- * measurement is the caller's responsibility.
- */
-export function createProbe(
-  runtimeId: string,
-  latencyMs: DurationMs,
-  reachable: boolean,
-  probedAt?: Timestamp
-): LatencyProbe {
-  return {
-    runtimeId,
-    latencyMs,
-    reachable,
-    probedAt: probedAt ?? new Date().toISOString(),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Task routing
-// ---------------------------------------------------------------------------
-
-/**
- * Route a task to the best available runtime given a LatencyBudget.
- *
- * Selection strategy:
- *  1. Filter out unavailable slots
- *  2. Filter out slots exceeding budget.maxLatencyMs
- *  3. Sort by proximity to budget.targetLatencyMs (prefer closest match)
- *  4. If no slot fits, return the lowest-latency available slot with reason 'best_effort'
- *  5. If no available slots at all, throw
- */
-export function routeTask(
-  taskId: string,
-  agent: AgentId,
-  budget: LatencyBudget,
-  slots: ExecutionSlot[]
-): RoutingDecision {
-  const available = slots.filter((s) => s.available);
-  if (available.length === 0) {
-    throw new Error(`No available execution slots for task ${taskId}`);
+  // Required fields
+  if (offer.lax_version !== '1.0') {
+    errors.push(`lax_version must be "1.0", got "${offer.lax_version}"`);
+  }
+  if (!offer.agent_did || typeof offer.agent_did !== 'string') {
+    errors.push('agent_did is required and must be a non-empty string');
+  }
+  if (!offer.erc8004_identity || typeof offer.erc8004_identity !== 'string') {
+    errors.push('erc8004_identity is required and must be a non-empty string');
+  }
+  if (!offer.soul_uri || typeof offer.soul_uri !== 'string') {
+    errors.push('soul_uri is required and must be a non-empty string');
+  }
+  if (!offer.pact_endpoint || typeof offer.pact_endpoint !== 'string') {
+    errors.push('pact_endpoint is required and must be a non-empty string');
+  }
+  if (!offer.acp_attestation_uid || typeof offer.acp_attestation_uid !== 'string') {
+    errors.push('acp_attestation_uid is required and must be a non-empty string');
   }
 
-  // Slots within budget
-  const withinBudget = available.filter(
-    (s) => s.measuredLatencyMs <= budget.maxLatencyMs
-  );
+  // ACP score range
+  if (typeof offer.acp_score !== 'number' || offer.acp_score < 0 || offer.acp_score > 100) {
+    errors.push('acp_score must be a number between 0 and 100');
+  }
 
-  let selected: ExecutionSlot;
-  let reason: string;
-
-  if (withinBudget.length > 0) {
-    // Sort by proximity to target
-    withinBudget.sort(
-      (a, b) =>
-        Math.abs(a.measuredLatencyMs - budget.targetLatencyMs) -
-        Math.abs(b.measuredLatencyMs - budget.targetLatencyMs)
-    );
-    selected = withinBudget[0]!;
-    reason =
-      selected.measuredLatencyMs <= budget.targetLatencyMs
-        ? 'within_target'
-        : 'within_budget';
+  // Capabilities
+  if (!Array.isArray(offer.capabilities) || offer.capabilities.length === 0) {
+    errors.push('capabilities must be a non-empty array');
   } else {
-    // Best effort — pick lowest latency even though it exceeds budget
-    available.sort((a, b) => a.measuredLatencyMs - b.measuredLatencyMs);
-    selected = available[0]!;
-    reason = 'best_effort';
+    for (let i = 0; i < offer.capabilities.length; i++) {
+      const cap = offer.capabilities[i]!;
+      if (!cap.skill_id) errors.push(`capabilities[${i}].skill_id is required`);
+      if (!cap.description) errors.push(`capabilities[${i}].description is required`);
+      if (!cap.pricing) {
+        errors.push(`capabilities[${i}].pricing is required`);
+      } else {
+        if (!cap.pricing.model) errors.push(`capabilities[${i}].pricing.model is required`);
+        if (!cap.pricing.currency) errors.push(`capabilities[${i}].pricing.currency is required`);
+        if (!cap.pricing.rail) errors.push(`capabilities[${i}].pricing.rail is required`);
+      }
+    }
+  }
+
+  // Payment rails
+  if (!Array.isArray(offer.payment_rails) || offer.payment_rails.length === 0) {
+    errors.push('payment_rails must be a non-empty array');
+  }
+
+  // Constitutional constraints
+  if (!Array.isArray(offer.constitutional_constraints)) {
+    errors.push('constitutional_constraints must be an array');
+  } else if (offer.constitutional_constraints.length === 0) {
+    warnings.push('No constitutional_constraints declared — agents with constraints may refuse to transact');
+  }
+
+  // Timestamp
+  if (!offer.updated_at) {
+    errors.push('updated_at is required');
   }
 
   return {
-    id: randomUUID(),
-    taskId,
-    agent,
-    selectedRuntimeId: selected.runtimeId,
-    estimatedLatencyMs: selected.measuredLatencyMs,
-    reason,
-    decidedAt: new Date().toISOString(),
+    valid: errors.length === 0,
+    errors,
+    warnings,
   };
 }
 
 // ---------------------------------------------------------------------------
-// SLA registration
+// Offer builder helper
 // ---------------------------------------------------------------------------
 
 /**
- * Register an SLA contract between an agent and a runtime.
+ * Create a new LaxOffer with defaults applied.
+ * Caller must supply all required identity fields.
  */
-export function registerSLA(
-  agent: AgentId,
-  runtimeId: string,
-  maxLatencyMs: DurationMs,
-  minThroughputRps: number,
-  options: {
-    id?: string;
-    validFrom?: Timestamp;
-    validUntil?: Timestamp | null;
-  } = {}
-): SLAContract {
-  if (maxLatencyMs <= 0) throw new Error('maxLatencyMs must be positive');
-  if (minThroughputRps <= 0) throw new Error('minThroughputRps must be positive');
+export function createOffer(params: {
+  agent_did: string;
+  erc8004_identity: string;
+  soul_uri: string;
+  capabilities: LaxCapability[];
+  constitutional_constraints: string[];
+  acp_score: number;
+  acp_attestation_uid: string;
+  pact_endpoint: string;
+  payment_rails: string[];
+}): LaxOffer {
   return {
-    id: options.id ?? randomUUID(),
-    agent,
-    runtimeId,
-    maxLatencyMs,
-    minThroughputRps,
-    validFrom: options.validFrom ?? new Date().toISOString(),
-    validUntil: options.validUntil ?? null,
+    lax_version: '1.0',
+    agent_did: params.agent_did,
+    erc8004_identity: params.erc8004_identity,
+    soul_uri: params.soul_uri,
+    capabilities: params.capabilities,
+    constitutional_constraints: params.constitutional_constraints,
+    acp_score: params.acp_score,
+    acp_attestation_uid: params.acp_attestation_uid,
+    pact_endpoint: params.pact_endpoint,
+    payment_rails: params.payment_rails,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Create a LaxCapability entry.
+ */
+export function createCapability(params: {
+  skill_id: string;
+  description: string;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  pricing: LaxPricing;
+}): LaxCapability {
+  return {
+    skill_id: params.skill_id,
+    description: params.description,
+    input_schema: params.input_schema ?? {},
+    output_schema: params.output_schema ?? {},
+    pricing: params.pricing,
   };
 }
 
 // ---------------------------------------------------------------------------
-// SLA compliance check
+// RegistryClient
 // ---------------------------------------------------------------------------
 
 /**
- * Check whether a probe result satisfies an SLA contract.
+ * Client for interacting with a LAX Registry.
+ *
+ * Three operations:
+ * - register: Publish an offer to the registry (x402-gated, $0.01 USDC)
+ * - search: Find agents by capability, skill, payment rail, ACP score
+ * - validate: Submit an offer for full validation (DID resolution, ERC-8004 check)
+ *
+ * In v0.3.0 this is a typed interface with method stubs — actual HTTP
+ * transport is deferred to v0.4.0 (server/client packages).
  */
-export function checkSLACompliance(
-  sla: SLAContract,
-  probe: LatencyProbe
-): { compliant: boolean; reason: string } {
-  if (!probe.reachable) {
-    return { compliant: false, reason: 'runtime_unreachable' };
-  }
-  if (probe.latencyMs > sla.maxLatencyMs) {
-    return {
-      compliant: false,
-      reason: `latency_exceeded: ${probe.latencyMs}ms > ${sla.maxLatencyMs}ms`,
+export class RegistryClient {
+  readonly config: RegistryClientConfig;
+
+  constructor(config?: Partial<RegistryClientConfig>) {
+    this.config = {
+      registry_url: config?.registry_url ?? DEFAULT_REGISTRY_URL,
+      x402_token: config?.x402_token,
+      timeout_ms: config?.timeout_ms ?? DEFAULT_TIMEOUT_MS,
     };
   }
-  return { compliant: true, reason: 'ok' };
+
+  /**
+   * Register (publish) a LAX offer to the registry.
+   * Write access is x402-gated ($0.01 USDC per registration).
+   *
+   * @param offer - The offer to register
+   * @returns The registered offer (with server-side fields populated)
+   * @throws If validation fails or payment is rejected
+   */
+  async register(offer: LaxOffer): Promise<LaxOffer> {
+    // Local validation first
+    const validation = validateOffer(offer);
+    if (!validation.valid) {
+      throw new Error(
+        `Offer validation failed: ${validation.errors.join('; ')}`
+      );
+    }
+
+    // In v0.3.0, registry HTTP calls are stubbed.
+    // Production implementation will POST to {registry_url}/offers
+    // with x402 payment header.
+    return offer;
+  }
+
+  /**
+   * Search the registry for agents matching the given parameters.
+   *
+   * @param params - Search filters (query, skill_ids, payment_rail, min_acp_score)
+   * @returns Array of matching offers with relevance scores
+   */
+  async search(params: RegistrySearchParams): Promise<RegistrySearchResult[]> {
+    // In v0.3.0, search is stubbed.
+    // Production implementation will GET {registry_url}/search with query params.
+    void params;
+    return [];
+  }
+
+  /**
+   * Submit an offer for full server-side validation.
+   * Checks DID resolution, ERC-8004 on-chain identity, SOUL.md availability,
+   * and ACP attestation verification.
+   *
+   * @param offer - The offer to validate
+   * @returns Validation result with errors and warnings
+   */
+  async validate(offer: LaxOffer): Promise<OfferValidationResult> {
+    // Local structural validation (server-side adds on-chain checks)
+    return validateOffer(offer);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A2AExporter
+// ---------------------------------------------------------------------------
+
+/**
+ * Export a LAX Offer to Google A2A agent.json format.
+ *
+ * Usage:
+ *   lax export --format a2a
+ *   Generates /.well-known/agent.json from /.well-known/lax-offer.json
+ */
+export class A2AExporter {
+  /**
+   * Convert a LAX Offer to A2A Agent Card format.
+   *
+   * @param offer - The LAX offer to convert
+   * @param agentName - Human-readable agent name
+   * @param agentUrl - Agent's base URL
+   * @param provider - Optional provider information
+   * @returns A2A Agent Card
+   */
+  static export(
+    offer: LaxOffer,
+    agentName: string,
+    agentUrl: string,
+    provider?: { organization: string; url?: string }
+  ): A2AAgentCard {
+    const skills: A2ASkill[] = offer.capabilities.map((cap) => ({
+      id: cap.skill_id,
+      name: cap.skill_id,
+      description: cap.description,
+      inputSchema: cap.input_schema,
+      outputSchema: cap.output_schema,
+    }));
+
+    return {
+      name: agentName,
+      description: `Agent ${offer.agent_did} — ${offer.capabilities.length} capabilities, ACP score ${offer.acp_score}`,
+      url: agentUrl,
+      skills,
+      provider,
+      version: '1.0',
+    };
+  }
+
+  /**
+   * Serialize an A2A Agent Card to JSON string for writing to
+   * /.well-known/agent.json.
+   */
+  static serialize(card: A2AAgentCard): string {
+    return JSON.stringify(card, null, 2);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Discovery helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch a LAX Offer from a remote agent's well-known endpoint.
+ *
+ * @param baseUrl - The agent's base URL (e.g. "https://invoica.kognai.ai")
+ * @returns The parsed LaxOffer
+ * @throws If the fetch fails or the response is not valid JSON
+ */
+export async function fetchOffer(baseUrl: string): Promise<LaxOffer> {
+  const url = `${baseUrl.replace(/\/$/, '')}${LAX_WELL_KNOWN_PATH}`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch LAX offer from ${url}: ${response.status} ${response.statusText}`
+    );
+  }
+
+  const offer = (await response.json()) as LaxOffer;
+
+  // Validate the fetched offer
+  const validation = validateOffer(offer);
+  if (!validation.valid) {
+    throw new Error(
+      `Fetched offer from ${url} is invalid: ${validation.errors.join('; ')}`
+    );
+  }
+
+  return offer;
+}
+
+/**
+ * Fetch an A2A Agent Card from a remote agent's well-known endpoint.
+ *
+ * @param baseUrl - The agent's base URL
+ * @returns The parsed A2A Agent Card
+ */
+export async function fetchA2ACard(baseUrl: string): Promise<A2AAgentCard> {
+  const url = `${baseUrl.replace(/\/$/, '')}${A2A_WELL_KNOWN_PATH}`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch A2A card from ${url}: ${response.status} ${response.statusText}`
+    );
+  }
+
+  return (await response.json()) as A2AAgentCard;
 }

@@ -1,7 +1,7 @@
 {
   "name": "@godman-protocols/lax",
-  "version": "0.2.0",
-  "description": "Latency-Aware Execution \u2014 route AI agent tasks to the fastest available runtime using SLA contracts and latency budgets",
+  "version": "0.3.0",
+  "description": "Linked Agent eXchange \u2014 agent capability discovery protocol",
   "type": "module",
   "main": "dist/index.js",
   "exports": "./dist/index.js",
@@ -17,15 +17,16 @@
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
-    "latency",
-    "scheduling",
-    "sla",
-    "routing",
-    "agent-infrastructure",
+    "agent-discovery",
+    "capability-discovery",
+    "a2a",
+    "lax-offer",
+    "erc-8004",
+    "x402",
     "godman-protocols",
     "multi-agent"
   ],
-  "author": "skingem1",
+  "author": "SkinGem",
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public",
@@ -33,7 +34,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/godman-protocols/lax.git"
+    "url": "https://github.com/Godman-s/lax.git"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -43,8 +44,8 @@
     "tsx": "^4.7.0"
   },
   "dependencies": {},
-  "homepage": "https://github.com/skingem1/godman-protocols/tree/main/lax#readme",
+  "homepage": "https://github.com/Godman-s/lax#readme",
   "bugs": {
-    "url": "https://github.com/skingem1/godman-protocols/issues"
+    "url": "https://github.com/Godman-s/lax/issues"
   }
 }

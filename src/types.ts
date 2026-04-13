@@ -1,102 +1,166 @@
 /**
- * LAX — Latency-Aware Execution
- * Core type definitions (skeleton)
- * @version 0.1.0-skeleton
+ * LAX — Linked Agent eXchange
+ * "Discoverable by design. An agent that cannot be found cannot transact."
+ *
+ * Core type definitions for the agent capability discovery protocol.
+ * @version 0.3.0
  */
 
-/** A unique agent identifier — DID, x402 wallet address, or scoped handle */
-export type AgentId = string;
-
-/** ISO 8601 timestamp */
-export type Timestamp = string;
-
-/** Duration in milliseconds */
-export type DurationMs = number;
+// ---------------------------------------------------------------------------
+// Pricing
+// ---------------------------------------------------------------------------
 
 /**
- * A LatencyBudget is a time-bounded execution envelope for agent tasks.
- * If the task exceeds the budget, the scheduler may preempt or re-route.
+ * Pricing model for a single capability.
  */
-export interface LatencyBudget {
-  /** Unique budget ID */
-  id: string;
-  /** Maximum allowed latency in ms */
-  maxLatencyMs: DurationMs;
-  /** Soft target — preferred latency (scheduler optimises toward this) */
-  targetLatencyMs: DurationMs;
-  /** Whether to abort the task if budget is exceeded */
-  hardLimit: boolean;
-  /** ISO 8601 — when this budget was created */
-  createdAt: Timestamp;
+export interface LaxPricing {
+  /** Pricing model: "per_call", "per_minute", "flat", "free" */
+  model: string;
+  /** Amount as string to avoid floating-point issues (e.g. "0.01") */
+  amount: string;
+  /** Currency identifier (e.g. "USDC", "USD", "ETH") */
+  currency: string;
+  /** Payment rail (e.g. "x402", "usdc-base", "stripe", "lightning") */
+  rail: string;
 }
 
-/**
- * An ExecutionSlot is a scheduled window on a specific runtime
- * with known latency characteristics.
- */
-export interface ExecutionSlot {
-  /** Unique slot ID */
-  id: string;
-  /** Runtime identifier (e.g. 'mac-mini-m4', 'hetzner-vps', 'edge-worker') */
-  runtimeId: string;
-  /** Measured round-trip latency to this runtime in ms */
-  measuredLatencyMs: DurationMs;
-  /** Whether the slot is currently available */
-  available: boolean;
-  /** ISO 8601 — last probe timestamp */
-  lastProbeAt: Timestamp;
-}
+// ---------------------------------------------------------------------------
+// Capabilities
+// ---------------------------------------------------------------------------
 
 /**
- * SLAContract — latency and throughput guarantees between agent and runtime.
+ * A single capability that an agent offers.
+ * Maps to an OpenClaw skill or A2A action.
  */
-export interface SLAContract {
-  /** Unique contract ID */
-  id: string;
-  /** Agent requesting the SLA */
-  agent: AgentId;
-  /** Runtime providing the SLA */
-  runtimeId: string;
-  /** Maximum latency guarantee in ms */
-  maxLatencyMs: DurationMs;
-  /** Minimum throughput in requests per second */
-  minThroughputRps: number;
-  /** ISO 8601 — contract validity start */
-  validFrom: Timestamp;
-  /** ISO 8601 — contract validity end (null = indefinite) */
-  validUntil: Timestamp | null;
+export interface LaxCapability {
+  /** Unique skill identifier (e.g. "create_invoice", "send_payment_reminder") */
+  skill_id: string;
+  /** Human-readable description of what this capability does */
+  description: string;
+  /** JSON Schema describing the expected input */
+  input_schema: Record<string, unknown>;
+  /** JSON Schema describing the output */
+  output_schema: Record<string, unknown>;
+  /** Pricing for invoking this capability */
+  pricing: LaxPricing;
 }
 
-/**
- * RoutingDecision — the outcome of the LAX scheduler selecting a runtime.
- */
-export interface RoutingDecision {
-  /** Unique decision ID */
-  id: string;
-  /** The task being routed */
-  taskId: string;
-  /** The agent requesting execution */
-  agent: AgentId;
-  /** The selected runtime */
-  selectedRuntimeId: string;
-  /** Estimated latency for this routing */
-  estimatedLatencyMs: DurationMs;
-  /** Why this runtime was chosen */
-  reason: string;
-  /** ISO 8601 */
-  decidedAt: Timestamp;
-}
+// ---------------------------------------------------------------------------
+// LAX Offer
+// ---------------------------------------------------------------------------
 
 /**
- * LatencyProbe — a periodic measurement of round-trip time to a runtime.
+ * The LAX Offer — the core discoverable document an agent publishes.
+ * Served at `/.well-known/lax-offer.json` or registered in a LAX Registry.
  */
-export interface LatencyProbe {
-  /** Runtime being probed */
-  runtimeId: string;
-  /** Measured latency in ms */
-  latencyMs: DurationMs;
-  /** Whether the runtime responded */
-  reachable: boolean;
-  /** ISO 8601 */
-  probedAt: Timestamp;
+export interface LaxOffer {
+  /** Protocol version — always "1.0" for this release */
+  lax_version: "1.0";
+  /** Agent DID (Decentralized Identifier) */
+  agent_did: string;
+  /** ERC-8004 on-chain identity token address */
+  erc8004_identity: string;
+  /** URI pointing to the agent's SOUL.md for constitutional verification */
+  soul_uri: string;
+  /** List of capabilities this agent offers */
+  capabilities: LaxCapability[];
+  /** Constitutional constraints this agent operates under */
+  constitutional_constraints: string[];
+  /** Agent Constitutional Performance score (0-100) */
+  acp_score: number;
+  /** EAS attestation UID for the ACP score */
+  acp_attestation_uid: string;
+  /** PACT endpoint URL for initiating negotiation */
+  pact_endpoint: string;
+  /** Accepted payment rails (e.g. ["x402", "usdc-base"]) */
+  payment_rails: string[];
+  /** ISO 8601 timestamp — when this offer was last updated */
+  updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Registry types
+// ---------------------------------------------------------------------------
+
+/** Search parameters for querying the LAX Registry. */
+export interface RegistrySearchParams {
+  /** Free-text query against capability descriptions */
+  query?: string;
+  /** Filter by specific skill IDs */
+  skill_ids?: string[];
+  /** Filter by payment rail */
+  payment_rail?: string;
+  /** Minimum ACP score threshold */
+  min_acp_score?: number;
+  /** Maximum number of results (default: 20, max: 100) */
+  limit?: number;
+  /** Pagination offset */
+  offset?: number;
+}
+
+/** A search result returned from the registry. */
+export interface RegistrySearchResult {
+  /** The matching offer */
+  offer: LaxOffer;
+  /** Relevance score (0.0-1.0) */
+  relevance: number;
+}
+
+/** Validation result for an offer submitted to the registry. */
+export interface OfferValidationResult {
+  /** Whether the offer passed validation */
+  valid: boolean;
+  /** List of validation errors, if any */
+  errors: string[];
+  /** List of warnings (non-blocking) */
+  warnings: string[];
+}
+
+/** Configuration for the RegistryClient. */
+export interface RegistryClientConfig {
+  /** Registry base URL (default: "https://lax.kognai.ai/registry") */
+  registry_url: string;
+  /** x402 payment token for write operations */
+  x402_token?: string;
+  /** Request timeout in milliseconds (default: 10000) */
+  timeout_ms?: number;
+}
+
+// ---------------------------------------------------------------------------
+// A2A export types
+// ---------------------------------------------------------------------------
+
+/** Google A2A agent.json format (subset relevant to LAX export). */
+export interface A2AAgentCard {
+  /** Agent name */
+  name: string;
+  /** Agent description */
+  description: string;
+  /** Agent URL */
+  url: string;
+  /** Agent capabilities / skills in A2A format */
+  skills: A2ASkill[];
+  /** Agent authentication info */
+  authentication?: Record<string, unknown>;
+  /** Agent provider info */
+  provider?: {
+    organization: string;
+    url?: string;
+  };
+  /** Protocol version */
+  version: string;
+}
+
+/** A2A skill representation. */
+export interface A2ASkill {
+  /** Skill identifier */
+  id: string;
+  /** Skill name */
+  name: string;
+  /** Skill description */
+  description: string;
+  /** Input JSON Schema */
+  inputSchema?: Record<string, unknown>;
+  /** Output JSON Schema */
+  outputSchema?: Record<string, unknown>;
 }

@@ -1,0 +1,27 @@
+{
+  "_comment": "EVAL-011 6-target pattern — OpenCode AI assistant config (added Sprint TICKET-011-EVAL-02)",
+  "plugin": "lax",
+  "version": "0.2.0",
+  "protocol": "godman-protocols/lax",
+  "description": "Latency-Aware Execution — route AI agent tasks to the fastest available runtime using SLA contracts and latency budgets",
+  "opencode": {
+    "model": "auto",
+    "context_files": [
+      "README.md",
+      "src/index.ts",
+      "src/types.ts"
+    ],
+    "ignore_patterns": [
+      "node_modules/**",
+      "dist/**",
+      "*.test.ts"
+    ],
+    "instructions": "You are assisting with the lax protocol library. Follow TypeScript strict mode, write JSDoc for all public functions, keep zero external dependencies in the core package."
+  },
+  "intel_015": {
+    "pattern": "deerflow-6-target",
+    "targets": ["claude", "cursor", "codex", "opencode", "openclaw", "skills/public"],
+    "status": "active",
+    "note": "6th target added by EVAL-011 Sprint 2/3"
+  }
+}
