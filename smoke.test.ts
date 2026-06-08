@@ -166,13 +166,60 @@ assert.equal(customRegistry.config.timeout_ms, 5000);
 passed++;
 console.log('OK  RegistryClient: custom config');
 
-// --- RegistryClient: register (stub returns offer) ---
-const registered = await registry.register(offer);
-assert.equal(registered.agent_did, offer.agent_did);
-passed++;
-console.log('OK  RegistryClient.register: returns offer (stub)');
+// --- RegistryClient: real HTTP transport against a mock registry (v0.4.0) ---
+const { createServer } = await import('node:http');
+let lastPath = '';
+let lastPayment: string | undefined;
+const mock = createServer((req, res) => {
+  lastPath = req.url || '';
+  lastPayment = req.headers['x-payment'] as string | undefined;
+  if (req.method === 'POST' && (req.url || '').startsWith('/offers')) {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const submitted = JSON.parse(body || '{}');
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ ...submitted, acp_attestation_uid: 'srv-uid-123' }));
+    });
+    return;
+  }
+  if (req.method === 'GET' && (req.url || '').startsWith('/search')) {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ results: [{ offer, relevance: 0.91 }] }));
+    return;
+  }
+  res.statusCode = 404;
+  res.end('not found');
+});
+await new Promise<void>((resolve) => mock.listen(0, resolve));
+const mockPort = (mock.address() as { port: number }).port;
+const liveRegistry = new RegistryClient({
+  registry_url: `http://127.0.0.1:${mockPort}`,
+  x402_token: 'tok_test',
+});
 
-// --- RegistryClient: register rejects invalid ---
+// register: POSTs /offers with the x402 header, returns the server-populated offer
+const registered = await liveRegistry.register(offer);
+assert.equal(registered.agent_did, offer.agent_did);
+assert.equal(registered.acp_attestation_uid, 'srv-uid-123');
+assert.equal(lastPath, '/offers');
+assert.equal(lastPayment, 'tok_test');
+passed++;
+console.log('OK  RegistryClient.register: POSTs offer with x402 header, returns server offer');
+
+// search: GETs /search with query params, parses { results: [...] }
+const searchResults = await liveRegistry.search({ query: 'invoice', skill_ids: ['build'], min_acp_score: 80 });
+assert.equal(searchResults.length, 1);
+assert.equal(searchResults[0].relevance, 0.91);
+assert.ok(lastPath.startsWith('/search?'));
+assert.ok(lastPath.includes('query=invoice'));
+assert.ok(lastPath.includes('min_acp_score=80'));
+passed++;
+console.log('OK  RegistryClient.search: GETs /search, parses results');
+
+await new Promise<void>((resolve) => mock.close(() => resolve()));
+
+// --- RegistryClient: register rejects invalid (before any network call) ---
 try {
   await registry.register(badOffer);
   assert.fail('should throw');
@@ -182,12 +229,22 @@ try {
 passed++;
 console.log('OK  RegistryClient.register: rejects invalid offer');
 
-// --- RegistryClient: search (stub returns empty) ---
-const searchResults = await registry.search({ query: 'invoice', min_acp_score: 80 });
-assert.ok(Array.isArray(searchResults));
-assert.equal(searchResults.length, 0);
+// --- RegistryClient: search is best-effort — unreachable registry → [] ---
+const offline = new RegistryClient({ registry_url: 'http://127.0.0.1:1', timeout_ms: 1000 });
+const emptyResults = await offline.search({ query: 'invoice' });
+assert.ok(Array.isArray(emptyResults) && emptyResults.length === 0);
 passed++;
-console.log('OK  RegistryClient.search: returns empty array (stub)');
+console.log('OK  RegistryClient.search: unreachable registry → [] (no throw)');
+
+// --- RegistryClient: register surfaces failure when the registry is unreachable ---
+try {
+  await offline.register(offer);
+  assert.fail('should throw');
+} catch (e: any) {
+  assert.ok(/unreachable|HTTP|payment/i.test(e.message));
+}
+passed++;
+console.log('OK  RegistryClient.register: unreachable registry → throws');
 
 // --- RegistryClient: validate (structural) ---
 const validateResult = await registry.validate(offer);

@@ -178,8 +178,11 @@ export function createCapability(params: {
  * - search: Find agents by capability, skill, payment rail, ACP score
  * - validate: Submit an offer for full validation (DID resolution, ERC-8004 check)
  *
- * In v0.3.0 this is a typed interface with method stubs — actual HTTP
- * transport is deferred to v0.4.0 (server/client packages).
+ * As of v0.4.0 the HTTP transport is wired: `search` GETs {registry_url}/search
+ * (best-effort, [] on failure) and `register` POSTs {registry_url}/offers with
+ * the x402 payment header (throws on failure). `validate` remains local-structural
+ * (server-side adds DID/ERC-8004/SOUL/ACP checks). The registry server itself is
+ * a separate deployment; until it is live these calls fall back gracefully.
  */
 export class RegistryClient {
   readonly config: RegistryClientConfig;
@@ -201,31 +204,90 @@ export class RegistryClient {
    * @throws If validation fails or payment is rejected
    */
   async register(offer: LaxOffer): Promise<LaxOffer> {
-    // Local validation first
+    // Local validation first — never spend a registration on a malformed offer.
     const validation = validateOffer(offer);
     if (!validation.valid) {
-      throw new Error(
-        `Offer validation failed: ${validation.errors.join('; ')}`
-      );
+      throw new Error(`Offer validation failed: ${validation.errors.join('; ')}`);
     }
 
-    // In v0.3.0, registry HTTP calls are stubbed.
-    // Production implementation will POST to {registry_url}/offers
-    // with x402 payment header.
-    return offer;
+    // POST {registry_url}/offers with the x402 payment header (write access is
+    // x402-gated, $0.01 USDC). Unlike search, register surfaces failures: a
+    // caller must know whether the offer was actually published.
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      accept: 'application/json',
+    };
+    if (this.config.x402_token) headers['x-payment'] = this.config.x402_token;
+
+    let res: Response | null;
+    try {
+      res = await this.fetchWithTimeout(`${this.config.registry_url}/offers`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(offer),
+      });
+    } catch (err) {
+      throw new Error(
+        `LAX registry unreachable at ${this.config.registry_url}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    if (!res) throw new Error('fetch is unavailable in this runtime');
+    if (res.status === 402) throw new Error('Registration payment required/rejected (x402)');
+    if (!res.ok) throw new Error(`Registry rejected the offer: HTTP ${res.status}`);
+
+    // The server echoes the offer with server-side fields populated; fall back
+    // to the submitted offer if the body is empty/unparseable.
+    try {
+      const body = (await res.json()) as Partial<LaxOffer>;
+      return { ...offer, ...body };
+    } catch {
+      return offer;
+    }
   }
 
   /**
    * Search the registry for agents matching the given parameters.
    *
+   * GET {registry_url}/search?<filters>. Accepts either a bare
+   * `RegistrySearchResult[]` or a `{ results: [...] }` envelope. Best-effort:
+   * on timeout, network error, or non-2xx, returns [] (a search never throws).
+   *
    * @param params - Search filters (query, skill_ids, payment_rail, min_acp_score)
    * @returns Array of matching offers with relevance scores
    */
   async search(params: RegistrySearchParams): Promise<RegistrySearchResult[]> {
-    // In v0.3.0, search is stubbed.
-    // Production implementation will GET {registry_url}/search with query params.
-    void params;
-    return [];
+    if (typeof fetch !== 'function') return [];
+    const qs = new URLSearchParams();
+    if (params.query) qs.set('query', params.query);
+    if (params.skill_ids?.length) qs.set('skill_ids', params.skill_ids.join(','));
+    if (params.payment_rail) qs.set('payment_rail', params.payment_rail);
+    if (typeof params.min_acp_score === 'number') qs.set('min_acp_score', String(params.min_acp_score));
+    if (typeof params.limit === 'number') qs.set('limit', String(params.limit));
+    if (typeof params.offset === 'number') qs.set('offset', String(params.offset));
+    const url = `${this.config.registry_url}/search${qs.toString() ? `?${qs}` : ''}`;
+    try {
+      const res = await this.fetchWithTimeout(url, { method: 'GET', headers: { accept: 'application/json' } });
+      if (!res || !res.ok) return [];
+      const body = (await res.json()) as RegistrySearchResult[] | { results?: RegistrySearchResult[] };
+      return Array.isArray(body) ? body : Array.isArray(body?.results) ? body.results : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** fetch with the configured timeout via AbortController. Returns the Response
+   *  (caller inspects .ok), or null if fetch is unavailable in this runtime. */
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response | null> {
+    if (typeof fetch !== 'function') return null;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), this.config.timeout_ms ?? DEFAULT_TIMEOUT_MS);
+    try {
+      return await fetch(url, { ...init, signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
